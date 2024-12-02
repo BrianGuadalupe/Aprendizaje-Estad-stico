@@ -1,0 +1,301 @@
+---
+title: "Practica2"
+author: "Brian Abad Guadalupe"
+date: "2024-12-01"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cerulean
+    code_folding: hide
+---
+
+```{r setup, echo=TRUE, message=FALSE, warning=FALSE}
+# Esto nos permite evitar que salgan los mensajes de warning en HTML
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# Instalar y cargar librerías
+options(repos = c(CRAN = "https://cran.r-project.org"))
+install.packages("psych")
+install.packages("factoextra")
+install.packages("corrplot")
+install.packages("dplyr")
+install.packages("tidyr")
+install.packages("readxl")
+
+library(psych)
+library(factoextra)
+library(corrplot)
+library(dplyr)
+library(tidyr)
+library(readxl)
+
+# Leer archivo Excel
+file_path <- "C:/Users/ASUS/Desktop/Práctica 2/wgidataset.xlsx"
+wgi_data <- read_excel(file_path)
+
+# Filtramos los datos para 2023 y eliminamos las filas con valores NaN o faltantes
+wgi_2023 <- wgi_data %>%
+  dplyr::filter(year == 2023) %>%
+  dplyr::filter(indicator %in% c("va", "pv", "ge", "rq", "rl", "cc")) %>%
+  dplyr::select(countryname, indicator, estimate) %>%
+  pivot_wider(names_from = indicator, values_from = estimate) %>% # Pivotamos las filas a columnas para análisis
+  na.omit()
+
+head(wgi_2023)
+
+```
+
+---
+
+## 2. Análisis de Componentes Principales (PCA)
+
+### Matriz de Correlaciones y Validación
+
+```{r correlation-matrix, echo=TRUE}
+
+# Algunos valores podrían no ser numéricos
+wgi_numeric <- wgi_2023 %>%
+  select(-countryname) %>%
+  
+  mutate(across(everything(), as.numeric))
+# Excluimos la columna "countryname" porque no es relevante para el análisis. Luego, renombramos 
+# las columnas para representarlas como los indicadores seleccionados ("va", "pv", "ge", "rq", "rl", "cc"). 
+
+colnames(wgi_numeric) <- c("va", "pv", "ge", "rq", "rl", "cc")
+
+# Matriz de correlaciones
+cor_matrix <- cor(wgi_numeric, use = "pairwise.complete.obs")
+print(cor_matrix)
+
+# Graficamos la matriz de correlación
+library(corrplot)
+
+# Crear el gráfico de correlación
+corrplot(cor_matrix,
+         method = "color",           # Representación por colores
+         type = "upper",             # Solo mostrar la mitad superior
+         tl.col = "black",           # Color de las etiquetas
+         tl.cex = 0.8,               # Tamaño de las etiquetas
+         col = colorRampPalette(c("lightgreen", "mediumseagreen", "darkgreen"))(200)
+)
+
+```
+# En este caso, sí tiene sentido realizar un análisis de componentes principales (PCA) para estos indicadores.
+# La matriz de correlaciones muestra fuertes correlaciones positivas entre la mayoría de los indicadores,
+# con valores que van desde aproximadamente 0.69 a más de 0.93. Esto sugiere que los indicadores 
+# están relacionados y podrían estar midiendo aspectos comunes de un mismo fenómeno subyacente 
+# (como gobernanza o calidad institucional).
+# El PCA es útil en este caso porque:
+
+# 1. Redundancia: Las fuertes correlaciones indican que hay redundancia en los datos,
+#    lo que significa que algunas variables podrían ser combinaciones lineales de otras.
+
+# 2. Reducción de dimensionalidad: Al realizar PCA, es probable que las primeras pocas
+#    componentes principales expliquen una gran proporción de la varianza, permitiendo
+#    simplificar el análisis sin perder mucha información.
+
+
+### Determinante y KMO
+
+```{r determinant-kmo, echo=TRUE}
+#Det
+det_cor <- det(cor_matrix)
+cat("Determinante de la matriz de correlaciones:", det_cor, "\n")
+
+# Índice KMO
+library(psych)
+
+kmo_result <- KMO(cor_matrix)
+print(kmo_result)
+```
+# Interpretación:
+# Un determinante cercano a 0 indica que las variables están altamente correlacionadas, 
+# lo que es bueno para realizar PCA.
+
+# El índice KMO mide la adecuación muestral. Un valor global cercano a 1 (0.89)
+# indica que las variables son apropiadas para el análisis factorial o PCA.
+# Los valores individuales (MSA) por variable también deben ser altos (>0.5).
+---
+
+### Realizar el PCA
+
+```{r pca-analysis, echo=TRUE}
+# Limpieza de los datos para el PCA
+
+wgi_numeric <- as.data.frame(wgi_numeric) # Nos aseguramos que sea un data.frame
+
+# Convertimos todas las columnas en números
+wgi_numeric <- wgi_numeric %>%
+  mutate(across(everything(), as.numeric))
+
+# Eliminamos valores faltantes, si los hay
+if (anyNA(wgi_numeric)) {
+  wgi_numeric <- na.omit(wgi_numeric)
+}
+
+# Reemplazamos valores infinitos por NA y los eliminamos
+if (any(is.infinite(as.matrix(wgi_numeric)))) {
+  wgi_numeric[is.infinite(as.matrix(wgi_numeric))] <- NA
+  wgi_numeric <- na.omit(wgi_numeric)
+}
+
+# Eliminamos columnas con desviación estándar igual a 0
+zero_sd_cols <- apply(wgi_numeric, 2, sd) == 0
+if (any(zero_sd_cols)) {
+  wgi_numeric <- wgi_numeric[, !zero_sd_cols]
+}
+
+# Realizar el PCA con los datos estandarizados
+pca_result <- prcomp(wgi_numeric, scale. = TRUE)
+
+# Resumen del PCA
+summary_pca <- summary(pca_result)
+
+# Proporción de varianza explicada y acumulada
+pca_var <- summary_pca$importance[2, ]  # Proporción explicada
+pca_var_cumulative <- summary_pca$importance[3, ]  # Varianza acumulada
+
+# Mostrar resultados de varianza explicada
+cat("\nProporción de varianza explicada:\n")
+print(pca_var)
+
+cat("\nProporción acumulada de varianza explicada:\n")
+print(pca_var_cumulative)
+
+# Proporción de varianza explicada para las primeras componentes principales
+cat("PC1:", round(pca_var[1] * 100, 2), "%\n")
+cat("PC2:", round(pca_var[2] * 100, 2), "%\n")
+
+# Proporción acumulada de varianza explicada
+cat("Varianza acumulada:", round(pca_var_cumulative[2] * 100, 2), "%\n")
+
+# Visualización de la varianza explicada
+library(factoextra)
+fviz_eig(pca_result, addlabels = TRUE, ylim = c(0, 60))
+
+# Visualización - Contribuciones de las variables a PC1 y PC2
+fviz_contrib(pca_result, choice = "var", axes = 1, top = 6, ggtheme = theme_minimal()) +
+  labs(title = "Contribución a PC1",
+       x = "Variables",
+       y = "Contribución (%)")
+
+# Visualización - Contribuciones de las variables a PC2
+fviz_contrib(pca_result, choice = "var", axes = 2, top = 6, ggtheme = theme_minimal()) +
+  labs(title = "Contribución a PC2",
+       x = "Variables",
+       y = "Contribución (%)")
+
+# Mostramos las cargas de las variables en PC1 y PC2
+pca_loadings <- pca_result$rotation[, 1:2]
+cat("\nCargas de las variables en las dos primeras componentes principales:\n")
+print(round(pca_loadings, 3))
+
+# Importancia de las Componentes Principales
+cat("Importancia de las Componentes Principales:\n")
+cat("Las dos primeras componentes principales explican en conjunto 92.07% de la variabilidad total en los datos:\n")
+cat("- Primera Componente Principal (PC1): Explica el 85.47% de la variabilidad y está influida principalmente por\n")
+cat("  las variables Control de Corrupción (cc), Estado de Derecho (rl) y Eficiencia Gubernamental (ge).\n")
+cat("- Segunda Componente Principal (PC2): Explica el 6.6% de la variabilidad, y sus variables más influyentes son\n")
+cat("  Estabilidad Política (pv) y Participación y Rendición de Cuentas (va).\n\n")
+
+# Interpretación
+cat("Interpretación:\n")
+cat("• PC1: Representa una dimensión relacionada con la calidad institucional, ya que las variables que más influyen\n")
+cat("  en esta componente están asociadas con gobernanza y efectividad administrativa.\n")
+cat("• PC2: Refleja una dimensión relacionada con la estabilidad política y la participación ciudadana, agrupando\n")
+cat("  variables que miden estos aspectos específicos.\n\n")
+
+cat("En resumen, estas dos componentes principales son suficientes para reducir la dimensionalidad de los datos,\n")
+cat("ya que explican una parte significativa de la variabilidad total y destacan aspectos importantes de los\n")
+cat("indicadores de gobernanza.\n")
+```
+
+### Visualización de PCA
+
+```{r pca-visualization, echo=TRUE}
+fviz_eig(pca_result, addlabels = TRUE, ylim = c(0, 60))
+```
+
+---
+
+## 3. Clustering (k-means)
+
+### Método del Codo
+
+```{r elbow-method, echo=TRUE}
+set.seed(123)  # Semilla
+kmeans_data <- scale(wgi_numeric)  # Escalar datos
+
+fviz_nbclust(kmeans_data, kmeans, method = "wss") +
+  labs(title = "Método del Codo", x = "Número de clusters", y = "WSS")
+```
+
+### Índice de Silhouette
+
+```{r silhouette-method, echo=TRUE}
+fviz_nbclust(kmeans_data, kmeans, method = "silhouette") +
+  labs(title = "Índice de Silhouette", x = "Número de clusters (k)", y = "Ancho promedio de Silhouette")
+```
+
+### Determinación Automática
+
+```{r nbclust, echo=TRUE}
+library(NbClust)
+optimal_clusters <- NbClust(data = kmeans_data, min.nc = 2, max.nc = 10, method = "kmeans")
+cat("Número óptimo de clusters según NbClust:", optimal_clusters$Best.nc[1], "\n")
+```
+
+---
+
+## 4. Visualización de Clusters
+
+```{r cluster-visualization, echo=TRUE}
+# Aplicar k-means
+k <- optimal_clusters$Best.nc[1]
+kmeans_result <- kmeans(kmeans_data, centers = k, nstart = 25)
+
+# Graficar clusters en PC1 y PC2
+library(ggplot2)
+library(viridis)
+
+pca_scores <- as.data.frame(pca_result$x[, 1:2])
+pca_scores$cluster <- as.factor(kmeans_result$cluster)
+
+ggplot(pca_scores, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point(size = 4, alpha = 0.8) +
+  labs(title = "Clusters en el Espacio de PC1 y PC2", x = "PC1", y = "PC2") +
+  theme_minimal()
+```
+
+---
+
+## 5. Conclusiones
+
+### Resumen de Resultados
+
+```{r conclusions, echo=TRUE}
+cat("1. PCA redujo la dimensionalidad manteniendo el 92% de la varianza.\n")
+cat("2. K-means identificó 7 grupos claros en el espacio PC1-PC2.\n")
+cat("3. Esto valida que PCA y clustering permiten interpretar datos complejos de gobernanza.\n")
+```
+## Introducción
+
+Este informe analiza los indicadores de gobernanza global para 2023 utilizando PCA para reducir dimensionalidad y k-means para identificar grupos de países.
+
+## 1. Preparación de los Datos
+
+### Cargar Librerías y Datos
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
